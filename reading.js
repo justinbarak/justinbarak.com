@@ -1,12 +1,12 @@
 /**
  * reading.js — fetch Goodreads RSS feeds and render book cards
- * Uses allorigins.win as a CORS proxy since Goodreads doesn't allow
+ * Uses corsproxy.io as a CORS proxy since Goodreads doesn't allow
  * direct cross-origin requests.
  */
 
 (function () {
   const GOODREADS_ID = '120449140';
-  const PROXY = 'https://api.allorigins.win/get?url=';
+  const PROXY = 'https://corsproxy.io/?';
 
   const currentUrl = `https://www.goodreads.com/review/list_rss/${GOODREADS_ID}?shelf=currently-reading`;
   const recentUrl  = `https://www.goodreads.com/review/list_rss/${GOODREADS_ID}?shelf=read`;
@@ -43,11 +43,17 @@
   }
 
   async function fetchFeed(url, limit) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     const proxyUrl = PROXY + encodeURIComponent(url);
-    const resp = await fetch(proxyUrl);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const json = await resp.json();
-    return parseBooks(json.contents, limit);
+    try {
+      const resp = await fetch(proxyUrl, { signal: controller.signal });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const text = await resp.text();
+      return parseBooks(text, limit);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function renderCard(book, shelfLabel) {
