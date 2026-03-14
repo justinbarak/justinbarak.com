@@ -1,0 +1,86 @@
+name: Fetch Goodreads Books
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Every 6 hours
+  workflow_dispatch:          # Allow manual trigger
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Goodreads RSS and generate books.json
+        run: |
+          python3 << 'EOF'
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          import json
+          import re
+          import html
+
+          GOODREADS_ID = "120449140"
+
+          def fetch_feed(shelf, limit):
+              url = f"https://www.goodreads.com/review/list_rss/{GOODREADS_ID}?shelf={shelf}"
+              headers = {"User-Agent": "Mozilla/5.0 (compatible; justinbarak.com/1.0)"}
+              req = urllib.request.Request(url, headers=headers)
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      data = resp.read().decode("utf-8")
+              except Exception as e:
+                  print(f"Failed to fetch {shelf}: {e}")
+                  return []
+
+              root = ET.fromstring(data)
+              ns = ""
+              items = root.findall(f".//{ns}item")[:limit]
+              books = []
+
+              for item in items:
+                  title = item.findtext("title", "").strip()
+                  link = item.findtext("link", "").strip()
+                  desc = item.findtext("description", "")
+
+                  # Unescape HTML entities
+                  desc_unescaped = html.unescape(desc)
+
+                  # Extract cover image
+                  cover_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc_unescaped)
+                  cover = cover_match.group(1) if cover_match else ""
+
+                  # Extract author
+                  author_match = re.search(r'author:\s*<[^>]+>([^<]+)</', desc_unescaped, re.IGNORECASE)
+                  if not author_match:
+                      author_match = re.search(r'author:\s*([^<\n]+)', desc_unescaped, re.IGNORECASE)
+                  author = author_match.group(1).strip() if author_match else ""
+
+                  books.append({"title": title, "link": link, "cover": cover, "author": author})
+
+              return books
+
+          current = fetch_feed("currently-reading", 1)
+          recent = fetch_feed("read", 3)
+
+          output = {"current": current, "recent": recent}
+          with open("books.json", "w") as f:
+              json.dump(output, f, indent=2)
+
+          print(f"Wrote books.json: {len(current)} current, {len(recent)} recent")
+          EOF
+
+      - name: Commit books.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add books.json
+          if git diff --cached --quiet; then
+            echo "No changes to books.json"
+          else
+            git commit -m "chore: update books.json [skip ci]"
+            git push
+          fi
